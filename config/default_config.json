@@ -1,0 +1,42 @@
+{
+  "robot": {
+    "name": "Alexa",
+    "wake_word": "hey alexa",
+    "default_language": "en",
+    "conversation_style": ["Conversational", "Natural", "Friendly"]
+  },
+
+  "identity": {
+    "robot_identity": "",
+    "enterprise_introduction": "",
+    "additional_information": ""
+  },
+
+  "voices": {
+    "english": "en-US-AriaNeural",
+    "arabic": "ar-OM-AbdullahNeural"
+  },
+
+  "ui": {
+    "theme": "dark",
+    "primary_color": "#00D4FF",
+    "background_color": "#0A0A1A",
+    "accent_color": "#7B2FBE",
+    "font_size": 24,
+    "show_subtitles": true,
+    "animation_speed": 1.0
+  },
+
+  "ai": {
+    "model": "gemini-1.5-flash",
+    "max_tokens": 300,
+    "temperature": 0.7,
+    "context_memory": 10
+  },
+
+  "audio": {
+    "whisper_model": "base",
+    "silence_threshold": 0.5,
+    "recording_timeout": 10
+  }
+}

@@ -1,0 +1,77 @@
+{
+  "_metadata": {
+    "version": "1.0.0",
+    "language": "English",
+    "last_updated": "2026-06-07",
+    "description": "English vocabulary corrections for ALEXA robot STT engine",
+    "developer_note": "Add common misrecognitions here. Format: 'wrong': 'correct'"
+  },
+
+  "corrections": {
+    "photo synthesis": "photosynthesis",
+    "photo synthysis": "photosynthesis",
+    "fotosynthesis": "photosynthesis",
+    "al jabra": "algebra",
+    "al gebra": "algebra",
+    "algerbra": "algebra",
+    "trigonomotry": "trigonometry",
+    "trignometry": "trigonometry",
+    "pythagorus": "pythagoras",
+    "pythagoroos": "pythagoras",
+    "dna": "DNA",
+    "rna": "RNA",
+    "mitocondria": "mitochondria",
+    "mitocondrea": "mitochondria",
+    "clorophyll": "chlorophyll",
+    "clorofill": "chlorophyll",
+    "evaporation": "evaporation",
+    "evaparation": "evaporation",
+    "multipication": "multiplication",
+    "multiplacation": "multiplication",
+    "devision": "division",
+    "devisson": "division",
+    "grammer": "grammar",
+    "gramer": "grammar",
+    "sentance": "sentence",
+    "explane": "explain",
+    "expain": "explain",
+    "what is two": "what is 2",
+    "what is three": "what is 3",
+    "what is four": "what is 4",
+    "what is five": "what is 5",
+    "can you explane": "can you explain",
+    "tell me about": "tell me about",
+    "how does": "how does",
+    "what are the": "what are the",
+    "defination": "definition",
+    "definision": "definition",
+    "mathmatics": "mathematics",
+    "mathimatic": "mathematics",
+    "sience": "science",
+    "siense": "science",
+    "biologee": "biology",
+    "biologi": "biology",
+    "chemestry": "chemistry",
+    "kemistry": "chemistry",
+    "physicks": "physics",
+    "phisics": "physics",
+    "geografy": "geography",
+    "jeography": "geography",
+    "histery": "history",
+    "histry": "history"
+  },
+
+  "subject_keywords": [
+    "math", "mathematics", "algebra", "geometry", "trigonometry",
+    "science", "biology", "chemistry", "physics", "geography",
+    "history", "english", "arabic", "computer", "programming",
+    "photosynthesis", "mitochondria", "chlorophyll", "DNA", "RNA",
+    "equation", "formula", "theorem", "hypothesis", "experiment"
+  ],
+
+  "question_starters": [
+    "what is", "what are", "how does", "how do",
+    "can you explain", "tell me about", "why is", "why does",
+    "who is", "where is", "when did", "what happened"
+  ]
+}

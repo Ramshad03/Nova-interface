@@ -1,0 +1,12 @@
+aria_env/
+.env
+__pycache__/
+*.py[cod]
+*.pt
+*.tmp
+*.wav
+*.mp3
+.vscode/
+config/user_config.json
+Thumbs.db
+.DS_Store
