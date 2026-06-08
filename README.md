@@ -84,3 +84,17 @@ Add/remove/list/test STT vocabulary corrections:
 ```
 python core/vocabulary/vocabulary_trainer.py
 ```
+
+
+##Test the Trainer
+
+python core/vocabulary/vocabulary_trainer.py
+
+ STT - OpenAI Whisper (local)
+ TTS - Microsoft Edge TTS
+ AI - Whisper tiny (local) 
+ Lang Detect - Whisper auto-detect  (relaced azure)
+
+ AI brain - Llama 3.3 70B Cloud (Groq)
+ AriaNeural - Cloud (Microsoft)
+ AbdullahNeural - Cloud (Microsoft)Ks

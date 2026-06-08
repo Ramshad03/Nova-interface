@@ -1,118 +1,184 @@
-# ─────────────────────────────────────────────
-# TTS ENGINE — Text to Speech
-# English: en-US-AriaNeural (Edge TTS)
-# Arabic:  ar-OM-AbdullahNeural (Edge TTS)
-# ─────────────────────────────────────────────
-
 import asyncio
 import os
+import queue
 import tempfile
 import threading
-import pygame
+import time
+
 import edge_tts
+import pygame
+
 from config.config_manager import config
 
 
-# ─────────────────────────────────────────────
-# TTS ENGINE CLASS
-# ─────────────────────────────────────────────
 class TTSEngine:
 
-    # ─── Voice Map ────────────────────────────
     VOICES = {
         "en": "en-US-AriaNeural",
         "ar": "ar-OM-AbdullahNeural",
     }
 
     def __init__(self):
-        # ─── Init pygame mixer for audio ──────
         pygame.mixer.init()
         self.is_speaking = False
-        self._temp_files = []
+        self._stop_flag = False
 
     # ─────────────────────────────────────────
-    # MAIN SPEAK METHOD
-    # Call this from anywhere in the app
+    # STANDARD SPEAK — full text at once
     # ─────────────────────────────────────────
     def speak(self, text: str, language: str = "en",
               on_start=None, on_finish=None):
-        """
-        Convert text to speech and play it.
-        Runs in background thread to not block UI.
-
-        Args:
-            text: Text to speak
-            language: 'en' or 'ar'
-            on_start: callback when speech starts
-            on_finish: callback when speech ends
-        """
+        """Synthesise and play a complete text block in a background thread."""
         if not text or not text.strip():
             return
 
         thread = threading.Thread(
             target=self._speak_thread,
             args=(text, language, on_start, on_finish),
-            daemon=True
+            daemon=True,
         )
         thread.start()
 
-    # ─── Background Thread ────────────────────
     def _speak_thread(self, text, language, on_start, on_finish):
         try:
             self.is_speaking = True
-
-            # Fire on_start callback
             if on_start:
                 on_start()
-
-            # Run async TTS in thread
             asyncio.run(self._generate_and_play(text, language))
-
         except Exception as e:
             print(f"[TTS ERROR] {e}")
         finally:
             self.is_speaking = False
-            # Fire on_finish callback
             if on_finish:
                 on_finish()
 
-    # ─── Generate Audio + Play ────────────────
     async def _generate_and_play(self, text: str, language: str):
-        """Generate audio file using Edge TTS then play it."""
-
-        # Get correct voice
         voice = self.VOICES.get(language, self.VOICES["en"])
-
-        # Create temp file for audio
-        tmp = tempfile.NamedTemporaryFile(
-            suffix=".mp3", delete=False
-        )
+        tmp = tempfile.NamedTemporaryFile(suffix=".mp3", delete=False)
         tmp_path = tmp.name
         tmp.close()
 
-        # ─── Generate with Edge TTS ───────────
         communicate = edge_tts.Communicate(text=text, voice=voice)
         await communicate.save(tmp_path)
 
-        # ─── Play with pygame ─────────────────
         pygame.mixer.music.load(tmp_path)
         pygame.mixer.music.play()
+        while pygame.mixer.music.get_busy() and not self._stop_flag:
+            await asyncio.sleep(0.05)
 
-        # Wait until done playing
-        while pygame.mixer.music.get_busy():
-            await asyncio.sleep(0.1)
-
-        # Cleanup temp file
         self._cleanup_file(tmp_path)
 
-    # ─── Stop Speaking ────────────────────────
+    # ─────────────────────────────────────────
+    # STREAMING SPEAK — sentence by sentence
+    # Synthesises sentence N+1 while playing N
+    # ─────────────────────────────────────────
+    def speak_streamed(self, sentence_generator, language: str = "en",
+                       on_play_start=None):
+        """
+        Accept a generator of sentences and play them as they arrive.
+        Returns immediately; sets is_speaking=True until all audio is done.
+
+        on_play_start: called once when the first audio clip starts playing.
+        """
+        self._stop_flag = False
+        self.is_speaking = True
+
+        thread = threading.Thread(
+            target=self._stream_worker,
+            args=(sentence_generator, language, on_play_start),
+            daemon=True,
+        )
+        thread.start()
+
+    def _stream_worker(self, sentence_generator, language, on_play_start):
+        """
+        Two-stage pipeline inside a single background thread:
+          Stage 1 (sub-thread): sentence → Edge TTS → temp file → synth_q
+          Stage 2 (this thread): temp file → pygame playback
+        """
+        synth_q = queue.Queue()
+        voice = self.VOICES.get(language, self.VOICES["en"])
+
+        # ── Stage 1: synthesiser sub-thread ──
+        def synthesiser():
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                for sentence in sentence_generator:
+                    if self._stop_flag:
+                        break
+                    sentence = sentence.strip()
+                    if not sentence:
+                        continue
+                    try:
+                        tmp = tempfile.NamedTemporaryFile(
+                            suffix=".mp3", delete=False
+                        )
+                        tmp_path = tmp.name
+                        tmp.close()
+                        loop.run_until_complete(
+                            self._synthesise_to_file(sentence, voice, tmp_path)
+                        )
+                        synth_q.put(tmp_path)
+                    except Exception as e:
+                        print(f"[TTS SYNTH] {e}")
+            finally:
+                loop.close()
+                synth_q.put(None)  # sentinel: no more files
+
+        synth_thread = threading.Thread(target=synthesiser, daemon=True)
+        synth_thread.start()
+
+        # ── Stage 2: player ──
+        first_played = False
+        try:
+            while True:
+                try:
+                    path = synth_q.get(timeout=15)
+                except queue.Empty:
+                    print("[TTS] Timeout waiting for synthesised audio.")
+                    break
+
+                if path is None:
+                    break
+
+                if self._stop_flag:
+                    self._cleanup_file(path)
+                    continue
+
+                if not first_played:
+                    if on_play_start:
+                        on_play_start()
+                    first_played = True
+
+                try:
+                    pygame.mixer.music.load(path)
+                    pygame.mixer.music.play()
+                    while pygame.mixer.music.get_busy() and not self._stop_flag:
+                        time.sleep(0.05)
+                except Exception as e:
+                    print(f"[TTS PLAY] {e}")
+                finally:
+                    self._cleanup_file(path)
+        finally:
+            self.is_speaking = False
+
+    async def _synthesise_to_file(self, text: str, voice: str, path: str):
+        communicate = edge_tts.Communicate(text=text, voice=voice)
+        await communicate.save(path)
+
+    # ─────────────────────────────────────────
+    # STOP
+    # ─────────────────────────────────────────
     def stop(self):
-        """Stop current speech immediately."""
+        self._stop_flag = True
         if pygame.mixer.music.get_busy():
             pygame.mixer.music.stop()
         self.is_speaking = False
 
-    # ─── Cleanup Temp Files ───────────────────
+    # ─────────────────────────────────────────
+    # HELPERS
+    # ─────────────────────────────────────────
     def _cleanup_file(self, path: str):
         try:
             if os.path.exists(path):
@@ -120,23 +186,15 @@ class TTSEngine:
         except Exception:
             pass
 
-    # ─── Test Voice ───────────────────────────
     def test_voices(self):
-        """Quick test for both voices."""
-        print("[TTS] Testing English voice (Aria)...")
+        print("[TTS] Testing English voice...")
         self.speak(
-            "Hello! I am Aria, your intelligent greeting assistant.",
-            language="en"
+            "Hello! I am your intelligent greeting assistant.",
+            language="en",
         )
-        import time
         time.sleep(4)
-
-        print("[TTS] Testing Arabic voice (Abdullah)...")
-        self.speak(
-            "مرحباً! أنا آريا، مساعدتك الذكية.",
-            language="ar"
-        )
+        print("[TTS] Testing Arabic voice...")
+        self.speak("مرحباً! أنا مساعدتك الذكية.", language="ar")
 
 
-# ─── Singleton Instance ───────────────────────
 tts = TTSEngine()

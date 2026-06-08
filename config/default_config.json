@@ -29,13 +29,13 @@
 
   "ai": {
     "model": "gemini-1.5-flash",
-    "max_tokens": 300,
-    "temperature": 0.7,
+    "max_tokens": 120,
+    "temperature": 0.5,
     "context_memory": 10
   },
 
   "audio": {
-    "whisper_model": "base",
+    "whisper_model": "tiny",
     "silence_threshold": 0.5,
     "recording_timeout": 10
   }

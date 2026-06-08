@@ -16,7 +16,7 @@ class AIBrain:
     # ─── Model map per provider ───────────────
     MODELS = {
         "openai": "gpt-4o-mini",
-        "groq":   "llama-3.3-70b-versatile",
+        "groq":   "llama-3.1-8b-instant",
         "gemini": "gemini-2.0-flash",
     }
 
@@ -194,6 +194,57 @@ class AIBrain:
             return "Sorry, something went wrong. Could you please repeat that?"
 
     # ─────────────────────────────────────────
+    # STREAMING CHAT — yields text chunks live
+    # ─────────────────────────────────────────
+    def chat_stream(self, user_text: str, language: str = "en"):
+        """
+        Generator yielding text chunks as the AI streams them.
+        Conversation history is updated when the stream is exhausted.
+        """
+        if not self.client:
+            yield (
+                "عذراً، لا يمكنني الاتصال." if language == "ar"
+                else "Sorry, I'm having trouble connecting right now."
+            )
+            return
+
+        try:
+            system_prompt = self._build_system_prompt(language)
+
+            self.conversation_history.append(
+                {"role": "user", "content": user_text}
+            )
+            max_history = config.get("ai", "context_memory", default=10)
+            if len(self.conversation_history) > max_history:
+                self.conversation_history = (
+                    self.conversation_history[-max_history:]
+                )
+
+            full_response = ""
+
+            if self.provider == "gemini":
+                for chunk in self._stream_gemini(system_prompt):
+                    full_response += chunk
+                    yield chunk
+            else:
+                for chunk in self._stream_openai_format(system_prompt):
+                    full_response += chunk
+                    yield chunk
+
+            full_response = full_response.strip()
+            self.conversation_history.append(
+                {"role": "assistant", "content": full_response}
+            )
+            print(f"[AI STREAM] ({self.provider}/{language}): {full_response[:80]}...")
+
+        except Exception as e:
+            print(f"[AI STREAM ERROR] {e}")
+            yield (
+                "عذراً، حدث خطأ ما." if language == "ar"
+                else "Sorry, something went wrong."
+            )
+
+    # ─────────────────────────────────────────
     # OPENAI / GROQ FORMAT (same SDK structure)
     # ─────────────────────────────────────────
     def _chat_openai_format(self, system_prompt: str) -> str:
@@ -209,6 +260,24 @@ class AIBrain:
             max_tokens=config.get("ai", "max_tokens", default=300),
         )
         return response.choices[0].message.content.strip()
+
+    def _stream_openai_format(self, system_prompt: str):
+        """Streaming variant for OpenAI and Groq."""
+        messages = [
+            {"role": "system", "content": system_prompt}
+        ] + self.conversation_history
+
+        stream = self.client.chat.completions.create(
+            model=self.model,
+            messages=messages,
+            temperature=config.get("ai", "temperature", default=0.7),
+            max_tokens=config.get("ai", "max_tokens", default=300),
+            stream=True,
+        )
+        for chunk in stream:
+            delta = chunk.choices[0].delta.content
+            if delta:
+                yield delta
 
     # ─────────────────────────────────────────
     # GEMINI FORMAT
@@ -235,6 +304,30 @@ class AIBrain:
             )
         )
         return response.text.strip()
+
+    def _stream_gemini(self, system_prompt: str):
+        """Streaming variant for Gemini."""
+        from google.genai import types
+
+        contents = [
+            types.Content(
+                role="user" if m["role"] == "user" else "model",
+                parts=[types.Part(text=m["content"])]
+            )
+            for m in self.conversation_history
+        ]
+
+        for chunk in self.client.models.generate_content_stream(
+            model=self.model,
+            contents=contents,
+            config=types.GenerateContentConfig(
+                system_instruction=system_prompt,
+                temperature=config.get("ai", "temperature", default=0.7),
+                max_output_tokens=config.get("ai", "max_tokens", default=300),
+            ),
+        ):
+            if chunk.text:
+                yield chunk.text
 
     # ─── Reset Conversation ───────────────────
     def reset_conversation(self):

@@ -1,181 +1,237 @@
-# ─────────────────────────────────────────────
-# INTERACTION LOOP — Full Voice Pipeline
-# Always-on classroom mode
-# Detects voice → AI → Speaks → Repeats
-# ─────────────────────────────────────────────
-
+import re
 import threading
 import time
+
+from config.config_manager import config
+from core.ai_brain import ai_brain
+from core.conversation_logger import conversation_logger
 from core.stt_engine import stt
 from core.tts_engine import tts
-from core.ai_brain import ai_brain
-from config.config_manager import config
 
 
-# ─────────────────────────────────────────────
-# INTERACTION LOOP CLASS
-# ─────────────────────────────────────────────
 class InteractionLoop:
-
-    STATE_IDLE      = "idle"
+    STATE_IDLE = "idle"
     STATE_LISTENING = "listening"
-    STATE_THINKING  = "thinking"
-    STATE_SPEAKING  = "speaking"
+    STATE_CAPTURING = "capturing"
+    STATE_THINKING = "thinking"
+    STATE_SPEAKING = "speaking"
+    TTS_ECHO_SETTLE_SECONDS = 1.0
 
     def __init__(self):
-        self.current_state  = self.STATE_IDLE
+        self.current_state = self.STATE_IDLE
         self.current_language = "en"
-        self.is_running     = False
-        self._loop_thread   = None
+        self.is_running = False
+        self._loop_thread = None
+        self.forced_language = None
 
-        # ─── UI Callbacks ─────────────────────
-        self.on_state_change    = None
-        self.on_subtitle        = None
-        self.on_clear_subtitle  = None
+        self.on_state_change = None
+        self.on_subtitle = None
+        self.on_clear_subtitle = None
         self.on_language_change = None
 
-    # ─────────────────────────────────────────
-    # START
-    # ─────────────────────────────────────────
     def start(self):
-        """Start always-on interaction loop."""
         if self.is_running:
-            print("[LOOP] Already running — skipping")
+            print("[LOOP] Already running - skipping")
             return
 
         self.is_running = True
-        print("[LOOP] Starting interaction loop ✅")
+        print("[LOOP] Starting interaction loop")
 
-        # ─── Startup greeting ─────────────────
         self._speak_startup_greeting()
 
-        # ─── Start loop thread ────────────────
         self._loop_thread = threading.Thread(
             target=self._always_on_loop,
-            daemon=True
+            daemon=True,
         )
         self._loop_thread.start()
 
-    # ─── Stop ─────────────────────────────────
     def stop(self):
-        """Stop interaction loop."""
         self.is_running = False
         stt.stop()
         tts.stop()
         print("[LOOP] Stopped.")
 
-    # ─── Pause (dashboard open) ───────────────
     def pause(self):
-        """Pause loop when dashboard opens."""
         self.is_running = False
         stt.stop()
         tts.stop()
-        print("[LOOP] Paused ⏸")
+        print("[LOOP] Paused")
 
-    # ─── Resume (dashboard close) ─────────────
     def resume(self):
-        """Resume loop when dashboard closes."""
         if self.is_running:
             return
 
         self.is_running = True
-        print("[LOOP] Resuming ▶")
+        print("[LOOP] Resuming")
 
         self._loop_thread = threading.Thread(
             target=self._always_on_loop,
-            daemon=True
+            daemon=True,
         )
         self._loop_thread.start()
 
-    # ─────────────────────────────────────────
-    # ALWAYS-ON LOOP
-    # ─────────────────────────────────────────
     def _always_on_loop(self):
-        """
-        Main loop:
-        1. Listen for voice
-        2. Transcribe
-        3. Get AI response
-        4. Speak response
-        5. Repeat
-        """
-        print("[LOOP] Always-on loop running 🎤")
+        print("[LOOP] Always-on loop running")
+        pending_text: str | None = None
+        pending_lang: str | None = None
 
         while self.is_running:
             try:
-                # ─── Set listening state ──────
-                self._set_state(self.STATE_LISTENING)
-                self._clear_subtitle()
+                if pending_text:
+                    user_text = pending_text
+                    detected_lang = pending_lang or "en"
+                    pending_text = None
+                    pending_lang = None
+                else:
+                    listen_language = self.forced_language or "en"
 
-                # ─── Listen for voice ─────────
-                result = stt.listen(duration=6)
+                    self._set_state(self.STATE_LISTENING)
+                    self._clear_subtitle()
 
-                # ─── Check if paused ──────────
-                if not self.is_running:
-                    break
+                    def _on_speech_start():
+                        self._set_state(self.STATE_CAPTURING)
+                        self._emit_subtitle("...", "YOU")
 
-                user_text     = result.get("text", "").strip()
-                detected_lang = result.get("language", "en")
+                    def _on_partial_text(text: str):
+                        # Update the subtitle live while the user is still talking
+                        self._emit_subtitle(text, "YOU")
 
-                # ─── Skip empty/short results ─
+                    result = stt.listen(
+                        language_hint=listen_language,
+                        on_speech_start=_on_speech_start,
+                        on_partial_text=_on_partial_text,
+                    )
+
+                    if not self.is_running:
+                        break
+
+                    user_text = result.get("text", "").strip()
+                    detected_lang = result.get("language", "en")
+
                 if not user_text or len(user_text) < 2:
                     self._set_state(self.STATE_IDLE)
-                    time.sleep(0.3)
+                    time.sleep(0.15)
                     continue
 
-                # ─── Update language ──────────
+                if self.forced_language:
+                    detected_lang = self.forced_language
+                    print(f"[LOOP] Language forced to: {detected_lang}")
+
                 self.current_language = detected_lang
                 self._emit_language(detected_lang)
+
+                self._set_state(self.STATE_LISTENING)
                 self._emit_subtitle(user_text, "YOU")
-                print(f"[LOOP] 🎤 ({detected_lang}): {user_text}")
+                print(f"[LOOP] USER ({detected_lang}): {user_text}")
 
-                # ─── Get AI response ──────────
+                time.sleep(0.15)
+
+                response_lang = self.forced_language or detected_lang
+
                 self._set_state(self.STATE_THINKING)
-                if detected_lang == "ar":
-                    self._emit_subtitle("جاري التفكير...", "ALEXA")
-                else:
-                    self._emit_subtitle("Thinking...", "ALEXA")
+                robot_name = config.get("robot", "name", default="Alexa")
 
-                response = ai_brain.chat(
-                    user_text, language=detected_lang
+                # ── Streaming pipeline ────────────────────
+                accumulated = []
+
+                def sentence_stream():
+                    buf = ""
+                    for chunk in ai_brain.chat_stream(
+                        user_text, language=response_lang
+                    ):
+                        if not self.is_running:
+                            return
+                        buf += chunk
+                        while True:
+                            m = re.search(r"(?<=[.!?؟])\s", buf)
+                            if not m:
+                                break
+                            sentence = buf[: m.start() + 1].strip()
+                            buf = buf[m.end():]
+                            if sentence:
+                                accumulated.append(sentence)
+                                self._emit_subtitle(
+                                    " ".join(accumulated),
+                                    robot_name.upper(),
+                                )
+                                yield sentence
+                    remaining = buf.strip()
+                    if remaining:
+                        accumulated.append(remaining)
+                        self._emit_subtitle(
+                            " ".join(accumulated),
+                            robot_name.upper(),
+                        )
+                        yield remaining
+
+                def on_first_audio():
+                    self._set_state(self.STATE_SPEAKING)
+
+                tts.speak_streamed(
+                    sentence_stream(),
+                    language=response_lang,
+                    on_play_start=on_first_audio,
                 )
 
-                # ─── Check if paused ──────────
-                if not self.is_running:
-                    break
+                # ── Barge-in monitor ──────────────────────
+                # on_barge_in fires instantly in the worker thread the moment
+                # voice is confirmed — stops TTS and flips the UI without
+                # waiting for the poll interval.
+                def _on_barge_in():
+                    tts.stop()
+                    self._set_state(self.STATE_CAPTURING)
+                    self._emit_subtitle("...", "YOU")
+                    print("[LOOP] Barge-in — TTS stopped instantly")
 
-                # ─── Speak response ───────────
-                self._set_state(self.STATE_SPEAKING)
-                robot_name = config.get("robot", "name", default="Alexa")
-                self._emit_subtitle(response, robot_name.upper())
-                print(f"[LOOP] 🔊 {robot_name}: {response[:80]}...")
+                stt.start_barge_in_monitor(on_barge_in=_on_barge_in)
 
-                tts.speak(response, language=detected_lang)
-
-                # Wait for speech to finish
                 while tts.is_speaking and self.is_running:
-                    time.sleep(0.1)
+                    if stt.barge_in_detected:
+                        tts.stop()   # idempotent safety-net
+                        break
+                    time.sleep(0.05)
 
-                # ─── Brief pause then loop ────
+                if stt.barge_in_detected:
+                    # Worker already capturing — wait for it to finish, then transcribe
+                    barge_result = stt.get_barge_in_result(
+                        language_hint=self.forced_language or self.current_language
+                    )
+                    stt.stop_barge_in_monitor()
+                    # Log whatever was spoken before the interruption
+                    if accumulated:
+                        conversation_logger.log(
+                            user_text, " ".join(accumulated), language=response_lang
+                        )
+                    bi_text = barge_result.get("text", "").strip()
+                    if bi_text and len(bi_text) >= 2:
+                        pending_text = bi_text
+                        pending_lang = barge_result.get("language", detected_lang)
+                        ai_brain.reset_conversation()
+                        continue
+                else:
+                    stt.stop_barge_in_monitor()
+                    # Log the complete exchange
+                    if accumulated:
+                        conversation_logger.log(
+                            user_text, " ".join(accumulated), language=response_lang
+                        )
+
                 self._set_state(self.STATE_IDLE)
                 self._clear_subtitle()
                 ai_brain.reset_conversation()
-                time.sleep(0.5)
+                self._settle_after_tts()
 
-            except Exception as e:
-                print(f"[LOOP ERROR] {e}")
+            except Exception as error:
+                print(f"[LOOP ERROR] {error}")
+                stt.stop_barge_in_monitor()
                 self._set_state(self.STATE_IDLE)
-                time.sleep(1)
+                time.sleep(0.5)
 
         print("[LOOP] Loop exited.")
 
-    # ─────────────────────────────────────────
-    # STARTUP GREETING
-    # ─────────────────────────────────────────
     def _speak_startup_greeting(self):
-        """Speak greeting when app starts — uses live config."""
-        # Reload config to get latest saved dashboard values
         from config.config_manager import ConfigManager
+
         fresh = ConfigManager()
         robot_name = fresh.robot_name
 
@@ -191,12 +247,10 @@ class InteractionLoop:
         while tts.is_speaking:
             time.sleep(0.1)
 
+        self._settle_after_tts()
         self._set_state(self.STATE_IDLE)
         self._clear_subtitle()
 
-    # ─────────────────────────────────────────
-    # UI HELPERS
-    # ─────────────────────────────────────────
     def _set_state(self, state: str):
         self.current_state = state
         if self.on_state_change:
@@ -214,6 +268,11 @@ class InteractionLoop:
         if self.on_language_change:
             self.on_language_change(lang)
 
+    def _settle_after_tts(self):
+        # Give speaker bleed a moment to decay, then flush any queued mic audio
+        # so the next listen cycle starts from a clean microphone buffer.
+        time.sleep(self.TTS_ECHO_SETTLE_SECONDS)
+        stt.drain()
 
-# ─── Singleton Instance ───────────────────────
+
 interaction_loop = InteractionLoop()

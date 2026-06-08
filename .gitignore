@@ -9,4 +9,4 @@ __pycache__/
 .vscode/
 config/user_config.json
 Thumbs.db
-.DS_Store
+.DS_Store   
